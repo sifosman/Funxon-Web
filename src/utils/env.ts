@@ -19,7 +19,7 @@ function getEnv(key: string, fallback: string): string {
 export const SUPPORT_EMAIL = getEnv('EXPO_PUBLIC_SUPPORT_EMAIL', 'support@funxon.co.za');
 export const SUPPORT_WHATSAPP = getEnv('EXPO_PUBLIC_SUPPORT_WHATSAPP', '+27837093579');
 export const SUPPORT_PHONE = getEnv('EXPO_PUBLIC_SUPPORT_PHONE', '+27837093579');
-export const PAYFAST_SANDBOX = getEnv('EXPO_PUBLIC_PAYFAST_SANDBOX', 'true') === 'true';
-export const PAYFAST_MERCHANT_ID = getEnv('EXPO_PUBLIC_PAYFAST_MERCHANT_ID', '');
-export const PAYFAST_MERCHANT_KEY = getEnv('EXPO_PUBLIC_PAYFAST_MERCHANT_KEY', '');
-export const PAYFAST_PASSPHRASE = getEnv('EXPO_PUBLIC_PAYFAST_PASSPHRASE', '');
+// PayFast merchant credentials are intentionally NOT in the client bundle.
+// They live as Supabase Edge Function secrets (PAYFAST_MERCHANT_ID,
+// PAYFAST_MERCHANT_KEY, PAYFAST_PASSPHRASE, PAYFAST_SANDBOX) and are applied
+// server-side by the payfast-checkout edge function.

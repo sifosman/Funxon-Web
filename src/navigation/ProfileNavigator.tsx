@@ -12,6 +12,7 @@ import ApplicationStep4Screen from '../screens/subscriber/ApplicationStep4Screen
 import ApplicationStatusScreen from '../screens/subscriber/ApplicationStatusScreen';
 import SubscriptionPlansScreen from '../screens/SubscriptionPlansScreen';
 import SubscriptionCheckoutScreen from '../screens/SubscriptionCheckoutScreen';
+import PaymentResultScreen from '../screens/PaymentResultScreen';
 import PortfolioAssistanceScreen from '../screens/PortfolioAssistanceScreen';
 import VendorSignupSuccessScreen from '../screens/VendorSignupSuccessScreen';
 import TermsAndPoliciesScreen from '../screens/TermsAndPoliciesScreen';
@@ -65,6 +66,12 @@ export type ProfileStackParamList = {
         isFree: boolean;
         productType?: 'vendor' | 'venue';
         planKey?: string;
+    };
+    PaymentResult: {
+        status?: 'success' | 'pending' | 'failed' | 'cancelled';
+        productType?: 'vendor' | 'venue';
+        planName?: string;
+        amountLabel?: string;
     };
     VendorSignupSuccess: { email: string; fullName: string; tierName: string; productType?: 'vendor' | 'venue'; businessName?: string };
     PortfolioAssistance: { openFaqs?: boolean } | undefined;
@@ -180,6 +187,11 @@ export function ProfileNavigator() {
             <Stack.Screen
                 name="SubscriptionCheckout"
                 component={SubscriptionCheckoutScreen}
+                options={{ headerShown: false }}
+            />
+            <Stack.Screen
+                name="PaymentResult"
+                component={PaymentResultScreen}
                 options={{ headerShown: false }}
             />
             <Stack.Screen

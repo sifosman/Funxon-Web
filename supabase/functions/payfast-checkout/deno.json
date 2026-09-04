@@ -1,0 +1,5 @@
+{
+  "name": "payfast-checkout",
+  "version": "1.0.0",
+  "description": "Creates server-signed PayFast checkout payments for authenticated users"
+}

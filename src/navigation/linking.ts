@@ -39,9 +39,9 @@ export const linking = {
               VendorQuoteCreate: 'vendor/quote/:quoteRequestId',
               VendorCatalogue: 'vendor-catalogue',
               VenueCatalogue: 'venue-catalogue',
-              Billing: {
-                path: 'payment/success',
-                alias: ['payment/cancel'],
+              Billing: 'billing',
+              PaymentResult: {
+                path: 'payment/:status',
               },
             },
           },

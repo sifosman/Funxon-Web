@@ -1,4 +1,23 @@
+// PayFast Instant Transaction Notification (ITN) handler.
+// PayFast POSTs server-to-server payment notifications here.
+// - Verifies the request signature (passphrase from secrets; sandbox test
+//   passphrase only when PAYFAST_SANDBOX=true)
+// - Verifies the paid amount matches the plan price resolved server-side
+// - Activates the matching vendor/venue subscription on COMPLETE
+// - Creates a subscription invoice for vendors
+// - Idempotent: duplicate ITNs for the same pf_payment_id are ignored
+
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.49.1';
+
+const SANDBOX_PASSPHRASE = 'jt7NOE43FZPn';
+
+// Must match VENUE_PLAN_PRICES in payfast-checkout/index.ts and the prices
+// shown in VenueListingPlansScreen.tsx
+const VENUE_PLAN_PRICES: Record<string, number> = {
+  monthly: 1750,
+  '6_month': 9750,
+  '12_month': 18000,
+};
 
 function toHex(buffer: ArrayBuffer): string {
   return Array.from(new Uint8Array(buffer))
@@ -74,19 +93,22 @@ Deno.serve(async (req: Request) => {
     return new Response('Bad Request', { status: 400 });
   }
 
-  // Verify signature (PayFast)
-  const passphrase = Deno.env.get('PAYFAST_PASSPHRASE') ?? 'jt7NOE43FZPn';
+  // Verify signature (PayFast). In live mode the passphrase secret is required —
+  // never fall back to the sandbox test passphrase.
+  const isSandbox = (Deno.env.get('PAYFAST_SANDBOX') ?? 'true') === 'true';
+  const envPassphrase = Deno.env.get('PAYFAST_PASSPHRASE') ?? '';
+  const passphrase = envPassphrase || (isSandbox ? SANDBOX_PASSPHRASE : '');
+  if (!passphrase) {
+    console.error('PayFast ITN: PAYFAST_PASSPHRASE secret is not set (live mode)');
+    return new Response('Server misconfigured', { status: 500 });
+  }
+
   const expectedPayload = buildSignaturePayload(params, passphrase);
   const expectedSig = await md5Hex(expectedPayload);
 
   if (expectedSig !== signature) {
     console.error('PayFast ITN signature mismatch', { m_payment_id: mPaymentId });
     return new Response('Invalid signature', { status: 400 });
-  }
-
-  // Only activate on COMPLETE
-  if (paymentStatus !== 'COMPLETE') {
-    return new Response('OK', { status: 200 });
   }
 
   // Service role client for DB updates
@@ -101,13 +123,21 @@ Deno.serve(async (req: Request) => {
   const supabase = createClient(supabaseUrl, serviceRoleKey);
 
   const pfPaymentId = params.pf_payment_id ?? null;
+  const paidAmount = parseFloat(params.amount ?? '0');
+
+  // Non-complete statuses (CANCELLED / FAILED / PENDING): log and leave the
+  // subscription untouched (it stays inactive until a successful payment).
+  if (paymentStatus !== 'COMPLETE') {
+    console.warn(`PayFast ITN: payment ${mPaymentId} status=${paymentStatus} amount=${params.amount} — no activation`);
+    return new Response('OK', { status: 200 });
+  }
 
   const nowIso = new Date().toISOString();
 
   // Venue activation: match on pending_payment_id
   const { data: venueRow, error: venueErr } = await supabase
     .from('venues')
-    .select('id, subscription_plan_key, features, billing_period')
+    .select('id, subscription_plan_key, features, billing_period, subscription_status, payfast_payment_id')
     .eq('pending_payment_id', mPaymentId)
     .maybeSingle();
 
@@ -116,6 +146,21 @@ Deno.serve(async (req: Request) => {
   }
 
   if (venueRow?.id) {
+    // Idempotency: skip if this PayFast payment was already processed
+    if (pfPaymentId && venueRow.payfast_payment_id === pfPaymentId) {
+      console.log(`Venue ${venueRow.id} already processed for pf_payment_id ${pfPaymentId}`);
+      return new Response('OK', { status: 200 });
+    }
+
+    // Amount verification against the server-side plan price
+    const expectedVenueAmount = VENUE_PLAN_PRICES[venueRow.subscription_plan_key ?? ''];
+    if (expectedVenueAmount != null && Math.abs(paidAmount - expectedVenueAmount) > 0.01) {
+      console.error(
+        `PayFast ITN amount mismatch for venue ${venueRow.id}: expected R${expectedVenueAmount.toFixed(2)}, got R${paidAmount.toFixed(2)} (${mPaymentId}) — not activating`,
+      );
+      return new Response('OK', { status: 200 });
+    }
+
     const isPaidVenuePlan = venueRow.subscription_plan_key !== 'get_started';
     const updatedFeatures = isPaidVenuePlan
       ? { ...(venueRow.features ?? {}), featured: true, featured_listings: true }
@@ -147,7 +192,7 @@ Deno.serve(async (req: Request) => {
   // Vendor activation: match on pending_payment_id
   const { data: vendorRow, error: vendorErr } = await supabase
     .from('vendors')
-    .select('id, subscription_tier, billing_period')
+    .select('id, subscription_tier, billing_period, billing_name, billing_email, subscription_status, payfast_payment_id')
     .eq('pending_payment_id', mPaymentId)
     .maybeSingle();
 
@@ -156,6 +201,31 @@ Deno.serve(async (req: Request) => {
   }
 
   if (vendorRow?.id) {
+    // Idempotency: skip if this PayFast payment was already processed
+    if (pfPaymentId && vendorRow.payfast_payment_id === pfPaymentId) {
+      console.log(`Vendor ${vendorRow.id} already processed for pf_payment_id ${pfPaymentId}`);
+      return new Response('OK', { status: 200 });
+    }
+
+    // Amount verification against the tier price for the billed period
+    let expectedVendorAmount: number | null = null;
+    const { data: tier } = await supabase
+      .from('subscription_tiers')
+      .select('price_monthly, price_yearly')
+      .eq('tier_name', vendorRow.subscription_tier ?? 'get_started')
+      .maybeSingle();
+    if (tier) {
+      expectedVendorAmount = Number(
+        vendorRow.billing_period === 'yearly' ? tier.price_yearly : tier.price_monthly,
+      );
+    }
+    if (expectedVendorAmount != null && !isNaN(expectedVendorAmount) && Math.abs(paidAmount - expectedVendorAmount) > 0.01) {
+      console.error(
+        `PayFast ITN amount mismatch for vendor ${vendorRow.id}: expected R${expectedVendorAmount.toFixed(2)}, got R${paidAmount.toFixed(2)} (${mPaymentId}) — not activating`,
+      );
+      return new Response('OK', { status: 200 });
+    }
+
     const isPaidVendorTier = vendorRow.subscription_tier !== 'get_started';
 
     const now = new Date();
@@ -180,6 +250,40 @@ Deno.serve(async (req: Request) => {
       console.error('Failed to activate vendor subscription', updErr);
     } else {
       console.log(`Vendor ${vendorRow.id} activated. Expires: ${vendorExpiresAt.toISOString()}`);
+
+      // Create the subscription invoice (skip if one exists for this payment)
+      if (pfPaymentId) {
+        const { data: existingInvoice } = await supabase
+          .from('subscription_invoices')
+          .select('id')
+          .eq('payfast_payment_id', pfPaymentId)
+          .maybeSingle();
+
+        if (!existingInvoice) {
+          const invoiceNumber = `INV-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
+          const { error: invErr } = await supabase.from('subscription_invoices').insert({
+            vendor_id: vendorRow.id,
+            invoice_number: invoiceNumber,
+            amount: isNaN(paidAmount) ? 0 : paidAmount,
+            currency: 'ZAR',
+            tier_name: vendorRow.subscription_tier ?? 'get_started',
+            billing_period: vendorRow.billing_period || 'monthly',
+            status: 'paid',
+            payment_method: 'payfast',
+            payfast_payment_id: pfPaymentId,
+            payment_date: nowIso,
+            period_start: nowIso,
+            period_end: vendorExpiresAt.toISOString(),
+            billing_name: vendorRow.billing_name ?? null,
+            billing_email: vendorRow.billing_email ?? null,
+          });
+          if (invErr) {
+            console.error('Failed to create subscription invoice', invErr);
+          } else {
+            console.log(`Invoice ${invoiceNumber} created for vendor ${vendorRow.id}`);
+          }
+        }
+      }
     }
   }
 

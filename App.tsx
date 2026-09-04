@@ -112,7 +112,14 @@ function AppContent({ helpVisible, setHelpVisible }: { helpVisible: boolean; set
     const handlePaymentDeepLink = (url: string | null) => {
       if (!url || Platform.OS === 'web') return;
       if (url.startsWith('funxon://payment/success') || url.startsWith('funxon://payment/cancel')) {
-        navRef.current.navigate('Main', { screen: 'Account', params: { screen: 'Billing' } });
+        const cancelled = url.includes('payment/cancel');
+        navRef.current.navigate('Main', {
+          screen: 'Account',
+          params: {
+            screen: 'PaymentResult',
+            params: { status: cancelled ? 'cancelled' : 'pending' },
+          },
+        });
       }
     };
 

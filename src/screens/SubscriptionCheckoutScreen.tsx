@@ -7,7 +7,7 @@ import * as WebBrowser from 'expo-web-browser';
 import { colors, radii, spacing, typography } from '../theme';
 import type { ProfileStackParamList } from '../navigation/ProfileNavigator';
 import { useApplicationForm } from '../context/ApplicationFormContext';
-import { buildPayFastPaymentData, getPayFastCheckoutUrl, payfastConfig } from '../config/payfast';
+import { createPayFastCheckout, pollSubscriptionActivated } from '../lib/payfastCheckout';
 import { supabase } from '../lib/supabaseClient';
 import { useAuth } from '../auth/AuthContext';
 import ThemedAlert from '../components/ThemedAlert';
@@ -288,6 +288,8 @@ export default function SubscriptionCheckoutScreen() {
   const { user } = useAuth();
   const { updateStep4, setPortfolioType } = useApplicationForm();
   const [alertState, setAlertState] = useState<{visible: boolean; title: string; message: string; buttons?: any[]} | null>(null);
+  // Reported by the payfast-checkout edge function (sandbox flag lives server-side)
+  const [payfastSandbox, setPayfastSandbox] = useState(false);
 
   const { tierName, billing, priceLabel, isFree, productType, planKey } = (route.params ?? {}) as RouteParams;
 
@@ -311,14 +313,10 @@ export default function SubscriptionCheckoutScreen() {
   const fieldLayouts = useRef<Record<string, number>>({});
 
   const supabaseBaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || 'https://fhlocaqndxawkbztncwo.supabase.co';
-  const notifyUrl = `${supabaseBaseUrl}/functions/v1/payfast-itn`;
   // On web, PayFast must redirect back to an actual https page (this web app's own origin),
   // since browsers cannot navigate to the native-only `funxon://` custom URI scheme. On native,
   // we route through the payfast-redirect edge function which 302s to the funxon:// deep link.
   const webOrigin = Platform.OS === 'web' && typeof window !== 'undefined' ? window.location.origin : '';
-  const returnUrl = Platform.OS === 'web'
-    ? `${webOrigin}/payment/success`
-    : `${supabaseBaseUrl}/functions/v1/payfast-redirect?type=success`;
   const cancelUrl = Platform.OS === 'web'
     ? `${webOrigin}/payment/cancel`
     : `${supabaseBaseUrl}/functions/v1/payfast-redirect?type=cancel`;
@@ -699,103 +697,91 @@ export default function SubscriptionCheckoutScreen() {
     const nameParts = fullName.trim().split(' ');
     const firstName = nameParts[0] || '';
     const lastName = nameParts.slice(1).join(' ') || '';
+    const resolvedProductType: 'vendor' | 'venue' = productType === 'venue' ? 'venue' : 'vendor';
 
-    const payfastPaymentId = `pf_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
-
-    const paymentData = buildPayFastPaymentData({
-      amount: priceNum,
-      paymentId: payfastPaymentId,
-      itemName: `${productType === 'venue' ? 'Funxon Venue' : 'Funxon'} ${tierName} Plan (${billing})`,
-      itemDescription: `${productType === 'venue' ? 'Venue' : 'Vendor'} subscription - billed ${billing}`,
-      firstName,
-      lastName,
-      email: email.trim(),
-      phone: normalizedPhone,
-      subscriptionType: billing === '6_month' || billing === '12_month' ? '2' : '1',
-      frequency: billing === 'yearly' ? '6' : '3',
-      recurringAmount: billing === '6_month' || billing === '12_month' ? undefined : priceNum,
-      cycles: billing === '6_month' || billing === '12_month' ? undefined : 0,
-      returnUrl,
-      cancelUrl,
-      notifyUrl,
-    });
-
-    if (productType === 'venue' && authUserId) {
-      const billingPeriodToStore = billing === 'yearly' ? '12_month' : billing;
-      const { error: upsertErr } = await supabase
-        .from('venues')
-        .upsert(
-          {
-            user_id: authUserId,
-            subscription_plan_key: planKey || 'monthly',
-            subscription_status: 'inactive',
-            billing_period: billingPeriodToStore,
-            pending_payment_id: payfastPaymentId,
-            billing_email: email.trim(),
-            billing_name: fullName.trim(),
-            billing_phone: normalizedPhone,
-          },
-          { onConflict: 'user_id' },
-        );
-
-      if (upsertErr) {
-        console.error('Failed to upsert venue (paid plan pre-record):', upsertErr);
-      }
+    // The payfast-checkout edge function authenticates the user, resolves the
+    // price server-side, pre-records the pending subscription and returns a
+    // signed checkout URL.
+    let session;
+    try {
+      session = await createPayFastCheckout({
+        productType: resolvedProductType,
+        planKey: resolvedProductType === 'venue' ? (planKey || 'monthly') : normalizedVendorTier,
+        billing,
+        buyer: {
+          firstName,
+          lastName,
+          email: email.trim(),
+          phone: normalizedPhone,
+        },
+        itemName: `${resolvedProductType === 'venue' ? 'Funxon Venue' : 'Funxon'} ${tierName} Plan (${billing})`,
+        webOrigin: webOrigin || undefined,
+      });
+    } catch (err) {
+      console.error('Failed to create PayFast checkout:', err);
+      setAlertState({
+        visible: true,
+        title: 'Payment Error',
+        message: err instanceof Error ? err.message : 'Could not start PayFast checkout. Please try again.',
+      });
+      return;
     }
-
-    if (productType !== 'venue' && authUserId) {
-      const billingPeriodToStore = billing === 'yearly' ? 'yearly' : billing;
-      const { error: upsertErr } = await supabase
-        .from('vendors')
-        .upsert(
-          {
-            user_id: authUserId,
-            subscription_tier: normalizedVendorTier,
-            subscription_status: 'inactive',
-            billing_period: billingPeriodToStore,
-            pending_payment_id: payfastPaymentId,
-            email: email.trim(),
-            billing_email: email.trim(),
-            billing_name: fullName.trim(),
-            billing_phone: normalizedPhone,
-          },
-          { onConflict: 'user_id' },
-        );
-
-      if (upsertErr) {
-        console.error('Failed to upsert vendor (paid plan pre-record):', upsertErr);
-      }
-    }
-
-    const checkoutUrl = getPayFastCheckoutUrl(paymentData);
+    setPayfastSandbox(Boolean(session.sandbox));
 
     try {
-      const result = await WebBrowser.openAuthSessionAsync(checkoutUrl, paymentRedirectTarget);
+      const result = await WebBrowser.openAuthSessionAsync(session.checkoutUrl, paymentRedirectTarget);
       if (result.type === 'cancel' || result.type === 'dismiss') {
+        navigation.navigate('PaymentResult', {
+          status: 'cancelled',
+          productType: resolvedProductType,
+          planName: tierName,
+          amountLabel: priceLabel,
+        });
         return;
       }
       if (result.type === 'success' && result.url?.startsWith(paymentCancelTarget)) {
+        navigation.navigate('PaymentResult', {
+          status: 'cancelled',
+          productType: resolvedProductType,
+          planName: tierName,
+          amountLabel: priceLabel,
+        });
         return;
       }
-      // Treat success (or unknown) as completed payment and proceed
+
+      // Send the welcome email and populate the portfolio while the ITN is confirmed.
       await sendWelcomeEmail();
 
-      // Set portfolio type based on productType before navigating
-      const portfolioType = productType === 'venue' ? 'venues' : 'vendors';
-      console.log('SubscriptionCheckoutScreen - Setting portfolio type to:', portfolioType);
-      await setPortfolioType(portfolioType);
+      // Verify the payment actually completed (ITN activates the subscription).
+      const activated = authUserId
+        ? await pollSubscriptionActivated(resolvedProductType, authUserId, 20000)
+        : false;
 
-      // Populate vendor/venue record with application data so portfolio is not empty
-      const portfolioTypeForPopulate = productType === 'venue' ? 'venue' : 'vendor';
-      await populatePortfolioFromApplication(portfolioTypeForPopulate);
+      if (activated) {
+        // Set portfolio type based on productType before navigating
+        const portfolioType = resolvedProductType === 'venue' ? 'venues' : 'vendors';
+        console.log('SubscriptionCheckoutScreen - Setting portfolio type to:', portfolioType);
+        await setPortfolioType(portfolioType);
 
-      console.log('SubscriptionCheckoutScreen - Navigating to portfolio management');
+        // Populate vendor/venue record with application data so portfolio is not empty
+        await populatePortfolioFromApplication(resolvedProductType);
 
-      const nextRoute = productType === 'venue' ? 'UpdateVenuePortfolio' : 'UpdateVendorPortfolio';
-      navigation.reset({
-        index: 0,
-        routes: [{ name: nextRoute }],
-      });
+        navigation.navigate('PaymentResult', {
+          status: 'success',
+          productType: resolvedProductType,
+          planName: `${tierName} (${billing})`,
+          amountLabel: priceLabel,
+        });
+      } else {
+        // ITN has not landed yet — the result screen keeps polling and will
+        // flip to success as soon as the subscription activates.
+        navigation.navigate('PaymentResult', {
+          status: 'pending',
+          productType: resolvedProductType,
+          planName: `${tierName} (${billing})`,
+          amountLabel: priceLabel,
+        });
+      }
     } catch (err) {
       setAlertState({ visible: true, title: 'Payment Error', message: 'Could not open PayFast checkout. Please try again.' });
     }
@@ -1012,7 +998,7 @@ export default function SubscriptionCheckoutScreen() {
           <View style={{ flex: 1 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm }}>
               <Text style={{ ...typography.bodySemiBold, color: colors.textPrimary, fontSize: isDesktop ? 16 : undefined }}>PayFast</Text>
-              {payfastConfig.sandbox && (
+              {payfastSandbox && (
                 <View
                   style={{
                     backgroundColor: '#FEF3C7',

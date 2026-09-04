@@ -5,9 +5,9 @@ import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import * as WebBrowser from 'expo-web-browser';
 import { colors, spacing, radii, typography } from '../theme';
-import { supabase, SUPABASE_URL } from '../lib/supabaseClient';
+import { supabase } from '../lib/supabaseClient';
 import { useAuth } from '../auth/AuthContext';
-import { buildPayFastPaymentData, getPayFastCheckoutUrl } from '../config/payfast';
+import { createPayFastCheckout } from '../lib/payfastCheckout';
 import type { ProfileStackParamList } from '../navigation/ProfileNavigator';
 import ThemedAlert from '../components/ThemedAlert';
 import { useIsDesktop } from '../hooks/useIsDesktop';
@@ -206,43 +206,59 @@ export default function BillingScreen() {
             // scheme. On native, we route through the payfast-redirect edge function which 302s
             // to the funxon:// deep link.
             const webOrigin = Platform.OS === 'web' && typeof window !== 'undefined' ? window.location.origin : '';
-            const returnUrl = Platform.OS === 'web'
-                ? `${webOrigin}/payment/success`
-                : `${SUPABASE_URL}/functions/v1/payfast-redirect?type=success`;
-            const cancelUrl = Platform.OS === 'web'
-                ? `${webOrigin}/payment/cancel`
-                : `${SUPABASE_URL}/functions/v1/payfast-redirect?type=cancel`;
             // Use the bare origin (not the full success path) as the web redirect target so that
             // both the success AND cancel redirects (different paths) are detected by
             // openAuthSessionAsync's URL match.
             const paymentRedirectTarget = Platform.OS === 'web' ? webOrigin : 'funxon://payment/success';
-            const paymentCancelTarget = Platform.OS === 'web' ? cancelUrl : 'funxon://payment/cancel';
+            const paymentCancelTarget = Platform.OS === 'web'
+                ? `${webOrigin}/payment/cancel`
+                : 'funxon://payment/cancel';
 
-            const paymentData = buildPayFastPaymentData({
-                amount: price,
+            // The payfast-checkout edge function resolves the price server-side, tags the
+            // payment with an m_payment_id on the vendor record and returns a signed
+            // checkout URL — so the ITN can match and extend this subscription.
+            const session = await createPayFastCheckout({
+                productType: 'vendor',
+                planKey: billing.subscription_tier,
+                billing: billing.billing_period === 'yearly' ? 'yearly' : 'monthly',
+                buyer: {
+                    firstName: nameParts[0] || '',
+                    lastName: nameParts.slice(1).join(' ') || '',
+                    email: billing.billing_email || '',
+                    phone: billing.billing_phone || '',
+                },
                 itemName: `Funxon ${billing.subscription_tier} Plan (${billing.billing_period || 'monthly'})`,
-                itemDescription: `${billing.subscription_tier} subscription renewal`,
-                firstName: nameParts[0] || '',
-                lastName: nameParts.slice(1).join(' ') || '',
-                email: billing.billing_email || '',
-                phone: billing.billing_phone || '',
-                returnUrl,
-                cancelUrl,
-                notifyUrl: `${SUPABASE_URL}/functions/v1/payfast-itn`,
+                webOrigin: webOrigin || undefined,
             });
 
-            const checkoutUrl = getPayFastCheckoutUrl(paymentData);
-            const result = await WebBrowser.openAuthSessionAsync(checkoutUrl, paymentRedirectTarget);
+            const result = await WebBrowser.openAuthSessionAsync(session.checkoutUrl, paymentRedirectTarget);
 
             if (result.type === 'cancel' || result.type === 'dismiss') {
+                navigation.navigate('PaymentResult', {
+                    status: 'cancelled',
+                    productType: 'vendor',
+                    planName: `${billing.subscription_tier} (${billing.billing_period || 'monthly'})`,
+                    amountLabel: `R${price.toFixed(2)}`,
+                });
                 return;
             }
             if (result.type === 'success' && result.url?.startsWith(paymentCancelTarget)) {
+                navigation.navigate('PaymentResult', {
+                    status: 'cancelled',
+                    productType: 'vendor',
+                    planName: `${billing.subscription_tier} (${billing.billing_period || 'monthly'})`,
+                    amountLabel: `R${price.toFixed(2)}`,
+                });
                 return;
             }
 
-            // After returning, refresh billing data
-            loadBillingData();
+            // After returning, verify via the result screen (polls until the ITN activates).
+            navigation.navigate('PaymentResult', {
+                status: 'pending',
+                productType: 'vendor',
+                planName: `${billing.subscription_tier} (${billing.billing_period || 'monthly'})`,
+                amountLabel: `R${price.toFixed(2)}`,
+            });
         } catch (err) {
             setAlertState({ visible: true, title: 'Payment Error', message: 'Could not open PayFast checkout. Please try again.' });
         } finally {
