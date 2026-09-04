@@ -216,28 +216,6 @@ export function usePlanner() {
         throw tasksError;
       }
 
-      if (!tasks || tasks.length === 0) {
-        const seedTasks = [
-          { title: 'Book venue', due_date: '2024-02-15', status: 'pending' },
-          { title: 'Send invitations', due_date: '2024-02-10', status: 'completed' },
-          { title: 'Order flowers', due_date: '2024-02-20', status: 'pending' },
-        ].map((task) => ({
-          ...task,
-          user_id: internalUser.id,
-        }));
-
-        await supabase.from('tasks').insert(seedTasks);
-
-        const { data: seededTasks } = await supabase
-          .from('tasks')
-          .select('id, title, status, due_date')
-          .eq('user_id', internalUser.id)
-          .order('due_date', { ascending: true })
-          .limit(50);
-
-        return { tasks: (seededTasks as Task[]) ?? [], userId: internalUser.id };
-      }
-
       return { tasks: (tasks as Task[]) ?? [], userId: internalUser.id };
     },
   });
