@@ -1,4 +1,5 @@
 # Funxon App — Project Notes
+<!-- last-updated: 2025-09-04 -->
 
 ## Build / Verify Commands
 - `npx tsc --noEmit` — typecheck (note: `tests/playwright/bugfix-verification.spec.ts` has 1 pre-existing TS error, unrelated to app code)
