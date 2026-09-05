@@ -28,21 +28,87 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
-function toHex(buffer: ArrayBuffer): string {
-  return Array.from(new Uint8Array(buffer))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('');
+// Deno's WebCrypto does not implement the legacy MD5 algorithm —
+// crypto.subtle.digest('MD5', ...) throws "NotSupportedError: Unrecognized
+// algorithm name". PayFast signatures are MD5 hashes, so we compute them with
+// this pure-JS RFC 1321 implementation (verified against known test vectors).
+function md5Digest(inputBytes: Uint8Array): Uint8Array {
+  const S = [
+    7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22,
+    5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20,
+    4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23,
+    6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21,
+  ];
+  const K = new Array(64);
+  for (let i = 0; i < 64; i++) {
+    K[i] = Math.floor(Math.abs(Math.sin(i + 1)) * 4294967296) | 0;
+  }
+  const len = inputBytes.length;
+  const totalLen = (((len + 8) >> 6) + 1) << 6; // multiple of 64, >= len + 9
+  const msg = new Uint8Array(totalLen);
+  msg.set(inputBytes);
+  msg[len] = 0x80;
+  const bitLenHi = Math.floor((len * 8) / 4294967296);
+  const bitLenLo = (len * 8) % 4294967296;
+  let w = totalLen - 8;
+  msg[w++] = bitLenLo & 0xff; msg[w++] = (bitLenLo >>> 8) & 0xff;
+  msg[w++] = (bitLenLo >>> 16) & 0xff; msg[w++] = (bitLenLo >>> 24) & 0xff;
+  msg[w++] = bitLenHi & 0xff; msg[w++] = (bitLenHi >>> 8) & 0xff;
+  msg[w++] = (bitLenHi >>> 16) & 0xff; msg[w++] = (bitLenHi >>> 24) & 0xff;
+
+  let a0 = 0x67452301 | 0, b0 = 0xefcdab89 | 0, c0 = 0x98badcfe | 0, d0 = 0x10325476 | 0;
+  const M = new Int32Array(16);
+  for (let off = 0; off < totalLen; off += 64) {
+    for (let i = 0; i < 16; i++) {
+      const j = off + i * 4;
+      M[i] = (msg[j] | (msg[j + 1] << 8) | (msg[j + 2] << 16) | (msg[j + 3] << 24)) | 0;
+    }
+    let A = a0, B = b0, C = c0, D = d0;
+    for (let i = 0; i < 64; i++) {
+      let F, g;
+      if (i < 16) { F = (B & C) | (~B & D); g = i; }
+      else if (i < 32) { F = (D & B) | (~D & C); g = (5 * i + 1) % 16; }
+      else if (i < 48) { F = B ^ C ^ D; g = (3 * i + 5) % 16; }
+      else { F = C ^ (B | ~D); g = (7 * i) % 16; }
+      F = (F + A + K[i] + M[g]) | 0;
+      const s = S[i];
+      const shifted = ((F << s) | (F >>> (32 - s))) | 0;
+      A = D; D = C; C = B;
+      B = (B + shifted) | 0;
+    }
+    a0 = (a0 + A) | 0; b0 = (b0 + B) | 0; c0 = (c0 + C) | 0; d0 = (d0 + D) | 0;
+  }
+  const out = new Uint8Array(16);
+  const words = [a0, b0, c0, d0];
+  for (let i = 0; i < 4; i++) {
+    out[i * 4] = words[i] & 0xff;
+    out[i * 4 + 1] = (words[i] >>> 8) & 0xff;
+    out[i * 4 + 2] = (words[i] >>> 16) & 0xff;
+    out[i * 4 + 3] = (words[i] >>> 24) & 0xff;
+  }
+  return out;
 }
 
-async function md5Hex(input: string): Promise<string> {
-  const data = new TextEncoder().encode(input);
-  const hash = await crypto.subtle.digest('MD5', data);
-  return toHex(hash);
+function md5Hex(input: string): string {
+  const digest = md5Digest(new TextEncoder().encode(input));
+  let hex = '';
+  for (const b of digest) hex += b.toString(16).padStart(2, '0');
+  return hex;
+}
+
+// PHP-style urlencoding: spaces become '+', and ~ ! ' ( ) * are percent-encoded.
+// This matches exactly how PayFast builds and validates signatures server-side,
+// so values containing spaces/punctuation (e.g. item_name) verify correctly.
+function pfUrlEncode(value: string): string {
+  return encodeURIComponent(value)
+    .replace(/%20/g, '+')
+    .replace(/~/g, '%7E')
+    .replace(/[!'()*]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase());
 }
 
 // PayFast request signatures use the field order of the PayFast payment form
 // (NOT alphabetical), with the passphrase appended before hashing.
-function generateRequestSignature(data: Record<string, string>, passphrase: string): Promise<string> {
+function generateRequestSignature(data: Record<string, string>, passphrase: string): string {
   const orderedKeys = [
     'merchant_id', 'merchant_key', 'return_url', 'cancel_url', 'notify_url',
     'name_first', 'name_last', 'email_address', 'cell_number',
@@ -57,12 +123,12 @@ function generateRequestSignature(data: Record<string, string>, passphrase: stri
   for (const key of orderedKeys) {
     const value = data[key];
     if (value === undefined || value === '') continue;
-    parts.push(`${encodeURIComponent(key)}=${encodeURIComponent(value)}`);
+    parts.push(`${pfUrlEncode(key)}=${pfUrlEncode(value)}`);
   }
 
   let payload = parts.join('&');
   if (passphrase) {
-    payload += `&passphrase=${encodeURIComponent(passphrase)}`;
+    payload += `&passphrase=${pfUrlEncode(passphrase)}`;
   }
   return md5Hex(payload);
 }
@@ -270,7 +336,7 @@ Deno.serve(async (req: Request) => {
     data.cycles = '0';
   }
 
-  data.signature = await generateRequestSignature(data, passphrase);
+  data.signature = generateRequestSignature(data, passphrase);
 
   const queryString = Object.entries(data)
     .filter(([, v]) => v !== undefined && v !== '')
