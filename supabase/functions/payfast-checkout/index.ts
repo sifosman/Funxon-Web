@@ -211,6 +211,13 @@ Deno.serve(async (req: Request) => {
       .upsert(
         {
           user_id: user.id,
+          // vendors.name is NOT NULL without a default, so a fresh INSERT must
+          // supply one — without this the vendor checkout upsert fails with a
+          // not-null violation ("Could not prepare payment"). Only set it when
+          // no row exists yet so renewal upserts never clobber the real
+          // business name (the client's portfolio-population step overwrites
+          // this placeholder with the trading name after payment).
+          name: existing?.id ? undefined : (buyerName || buyerEmail || user.email || 'Pending vendor'),
           subscription_tier: planKey,
           subscription_status: existing?.subscription_status === 'active' ? 'active' : 'inactive',
           billing_period: billingPeriod,
