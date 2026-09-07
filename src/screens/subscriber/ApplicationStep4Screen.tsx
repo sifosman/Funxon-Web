@@ -12,6 +12,7 @@ import { submitApplication, uploadFileToStorage, updateUserRoleToVendor } from '
 import { createGalleryMediaRecord } from '../../lib/mediaUpload';
 import { useAuth } from '../../auth/AuthContext';
 import { supabase } from '../../lib/supabaseClient';
+import { geocodeAddress, normalizeAddress } from '../../lib/geocoding';
 import ThemedAlert from '../../components/ThemedAlert';
 import { useIsDesktop } from '../../hooks/useIsDesktop';
 
@@ -261,6 +262,14 @@ export default function ApplicationStep4Screen() {
 
       if (result.success) {
         let createdListingId: string | number | null = null;
+
+        // Resolve coordinates for the captured address so the portfolio map
+        // shows a real pin (gracefully null when geocoding fails). Declared
+        // here so the venue_listings / venues / vendors save paths all share it.
+        const physicalAddress = normalizeAddress(state.step1.businessPhysicalAddress);
+        const capturedCity = state.step1.city?.trim() || null;
+        const coordinates = await geocodeAddress(physicalAddress);
+
         if (state.portfolioType === 'venues') {
           const parseCapacityNumber = (value: string): number | null => {
             const numbers = (value ?? '').match(/\d[\d,]*/g);
@@ -310,11 +319,16 @@ export default function ApplicationStep4Screen() {
                   user_id: user.id,
                   name: listingName,
                   description: state.step2.description?.trim() || null,
-                  location: state.step1.businessPhysicalAddress?.trim() || null,
-                  address_line_1: state.step1.businessPhysicalAddress?.trim() || null,
-                  city: state.step2.cities?.[0] || null,
+                  location: physicalAddress,
+                  address_line_1: physicalAddress,
+                  // Prefer the free-text town captured in step 1 over the fixed
+                  // coverage-city list (which caused "Roshnee" addresses to
+                  // display as "Alberton").
+                  city: capturedCity || state.step2.cities?.[0] || null,
                   province: state.step2.provinces?.[0] || null,
                   country: 'South Africa',
+                  latitude: coordinates?.latitude ?? null,
+                  longitude: coordinates?.longitude ?? null,
                   contact_email: state.step1.email?.trim() || state.step1.userEmail?.trim() || null,
                   whatsapp_number: state.step1.userWhatsapp?.trim() || state.step1.contactPhoneNumber?.trim() || null,
                   instagram_url: state.step1.instagram?.trim() || null,
@@ -371,7 +385,9 @@ export default function ApplicationStep4Screen() {
                 user_id: user.id,
                 name: venueListingName,
                 description: state.step2.description?.trim() || null,
-                location: state.step1.businessPhysicalAddress?.trim() || null,
+                location: physicalAddress,
+                latitude: coordinates?.latitude ?? null,
+                longitude: coordinates?.longitude ?? null,
                 subscription_plan_key: state.step4.subscriptionPlan,
                 subscription_status: 'active',
                 billing_period: state.step4.billingPeriod || 'monthly',
@@ -395,11 +411,16 @@ export default function ApplicationStep4Screen() {
               state.step1.registeredBusinessName?.trim() ||
               'Vendor Listing';
 
+            const vendorPhysicalAddress = normalizeAddress(state.step1.businessPhysicalAddress);
+            const vendorCoordinates = await geocodeAddress(vendorPhysicalAddress);
+
             const vendorPayload = {
               user_id: user.id,
               name: listingName,
               description: state.step2.description?.trim() || null,
-              location: state.step1.businessPhysicalAddress?.trim() || null,
+              location: vendorPhysicalAddress,
+              latitude: vendorCoordinates?.latitude ?? null,
+              longitude: vendorCoordinates?.longitude ?? null,
               email: state.step1.email?.trim() || null,
               whatsapp_number: state.step1.contactPhoneNumber?.trim() || null,
               instagram_url: state.step1.instagram?.trim() || null,

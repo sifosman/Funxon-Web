@@ -140,6 +140,33 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
+// The pending-record upserts are the only DB writes before the signed URL is
+// returned — a transient failure here surfaced to users as "Could not process
+// payment" (2026-09-05: six 500s from retries). Retry once and always log the
+// full Postgres error (message/code/details/hint) so failures are diagnosable.
+async function upsertWithRetry(
+  label: string,
+  run: () => Promise<{ error: { message?: string; code?: string; details?: string; hint?: string } | null }>,
+): Promise<{ error: { message?: string; code?: string; details?: string; hint?: string } | null }> {
+  let lastError: { message?: string; code?: string; details?: string; hint?: string } | null = null;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const { error } = await run();
+    if (!error) {
+      if (attempt > 1) console.log(`payfast-checkout: ${label} succeeded on retry`);
+      return { error: null };
+    }
+    lastError = error;
+    console.error(`payfast-checkout: ${label} failed (attempt ${attempt})`, {
+      message: error?.message,
+      code: error?.code,
+      details: error?.details,
+      hint: error?.hint,
+    });
+    if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 300));
+  }
+  return { error: lastError };
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
@@ -247,23 +274,30 @@ Deno.serve(async (req: Request) => {
       .select('id, subscription_status')
       .eq('user_id', user.id)
       .maybeSingle();
-    const { error: upsertErr } = await admin
-      .from('venues')
-      .upsert(
-        {
-          user_id: user.id,
-          subscription_plan_key: planKey,
-          subscription_status: existing?.subscription_status === 'active' ? 'active' : 'inactive',
-          billing_period: planKey,
-          pending_payment_id: mPaymentId,
-          billing_email: buyerEmail || undefined,
-          billing_name: buyerName || undefined,
-          billing_phone: buyerPhone || undefined,
-        },
-        { onConflict: 'user_id' },
-      );
+    const { error: upsertErr } = await upsertWithRetry('venue pending record upsert', () =>
+      admin
+        .from('venues')
+        .upsert(
+          {
+            user_id: user.id,
+            subscription_plan_key: planKey,
+            subscription_status: existing?.subscription_status === 'active' ? 'active' : 'inactive',
+            billing_period: planKey,
+            pending_payment_id: mPaymentId,
+            billing_email: buyerEmail || undefined,
+            billing_name: buyerName || undefined,
+            billing_phone: buyerPhone || undefined,
+          },
+          { onConflict: 'user_id' },
+        ),
+    );
     if (upsertErr) {
-      console.error('payfast-checkout: failed to upsert venue pending record', upsertErr);
+      console.error('payfast-checkout: failed to upsert venue pending record', {
+        message: upsertErr.message,
+        code: upsertErr.code,
+        details: upsertErr.details,
+        hint: upsertErr.hint,
+      });
       return json({ error: 'Could not prepare payment' }, 500);
     }
   } else {
@@ -272,31 +306,38 @@ Deno.serve(async (req: Request) => {
       .select('id, subscription_status')
       .eq('user_id', user.id)
       .maybeSingle();
-    const { error: upsertErr } = await admin
-      .from('vendors')
-      .upsert(
-        {
-          user_id: user.id,
-          // vendors.name is NOT NULL without a default, so a fresh INSERT must
-          // supply one — without this the vendor checkout upsert fails with a
-          // not-null violation ("Could not prepare payment"). Only set it when
-          // no row exists yet so renewal upserts never clobber the real
-          // business name (the client's portfolio-population step overwrites
-          // this placeholder with the trading name after payment).
-          name: existing?.id ? undefined : (buyerName || buyerEmail || user.email || 'Pending vendor'),
-          subscription_tier: planKey,
-          subscription_status: existing?.subscription_status === 'active' ? 'active' : 'inactive',
-          billing_period: billingPeriod,
-          pending_payment_id: mPaymentId,
-          email: buyerEmail || undefined,
-          billing_email: buyerEmail || undefined,
-          billing_name: buyerName || undefined,
-          billing_phone: buyerPhone || undefined,
-        },
-        { onConflict: 'user_id' },
-      );
+    const { error: upsertErr } = await upsertWithRetry('vendor pending record upsert', () =>
+      admin
+        .from('vendors')
+        .upsert(
+          {
+            user_id: user.id,
+            // vendors.name is NOT NULL without a default, so a fresh INSERT must
+            // supply one — without this the vendor checkout upsert fails with a
+            // not-null violation ("Could not prepare payment"). Only set it when
+            // no row exists yet so renewal upserts never clobber the real
+            // business name (the client's portfolio-population step overwrites
+            // this placeholder with the trading name after payment).
+            name: existing?.id ? undefined : (buyerName || buyerEmail || user.email || 'Pending vendor'),
+            subscription_tier: planKey,
+            subscription_status: existing?.subscription_status === 'active' ? 'active' : 'inactive',
+            billing_period: billingPeriod,
+            pending_payment_id: mPaymentId,
+            email: buyerEmail || undefined,
+            billing_email: buyerEmail || undefined,
+            billing_name: buyerName || undefined,
+            billing_phone: buyerPhone || undefined,
+          },
+          { onConflict: 'user_id' },
+        ),
+    );
     if (upsertErr) {
-      console.error('payfast-checkout: failed to upsert vendor pending record', upsertErr);
+      console.error('payfast-checkout: failed to upsert vendor pending record', {
+        message: upsertErr.message,
+        code: upsertErr.code,
+        details: upsertErr.details,
+        hint: upsertErr.hint,
+      });
       return json({ error: 'Could not prepare payment' }, 500);
     }
   }

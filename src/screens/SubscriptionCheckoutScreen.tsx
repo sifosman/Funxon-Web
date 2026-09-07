@@ -9,6 +9,7 @@ import type { ProfileStackParamList } from '../navigation/ProfileNavigator';
 import { useApplicationForm } from '../context/ApplicationFormContext';
 import { createPayFastCheckout, pollSubscriptionActivated } from '../lib/payfastCheckout';
 import { supabase } from '../lib/supabaseClient';
+import { geocodeAddress, normalizeAddress } from '../lib/geocoding';
 import { useAuth } from '../auth/AuthContext';
 import ThemedAlert from '../components/ThemedAlert';
 import { useIsDesktop } from '../hooks/useIsDesktop';
@@ -308,6 +309,11 @@ export default function SubscriptionCheckoutScreen() {
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [touched, setTouched] = useState<Record<string, boolean>>({});
+  // Guards the pay button against double-taps: two concurrent checkout
+  // requests race on the same venue/vendor upsert and can both fail (this is
+  // what produced repeated "Could not process payment" 500s on 2026-09-05).
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const isSubmittingRef = useRef(false);
 
   const scrollViewRef = useRef<ScrollView>(null);
   const fieldLayouts = useRef<Record<string, number>>({});
@@ -398,6 +404,13 @@ export default function SubscriptionCheckoutScreen() {
       details.registeredBusinessName?.trim() ||
       (portfolioType === 'venue' ? 'Venue Listing' : 'Vendor Listing');
 
+    // Normalized captured address + coordinates so the portfolio map shows a
+    // real pin. Prefer the free-text town captured in step 1 over the fixed
+    // coverage-city list (which caused "Roshnee" addresses to show "Alberton").
+    const capturedAddress = normalizeAddress(details.businessPhysicalAddress);
+    const capturedCity = typeof details.city === 'string' ? details.city.trim() || null : null;
+    const coordinates = await geocodeAddress(capturedAddress);
+
     if (portfolioType === 'venue') {
       const parseCapacityNumber = (value: string): number | null => {
         const numbers = (value ?? '').match(/\d[\d,]*/g);
@@ -437,11 +450,13 @@ export default function SubscriptionCheckoutScreen() {
           user_id: user.id,
           name: listingName,
           description: application.business_description?.trim() || null,
-          location: details.businessPhysicalAddress?.trim() || null,
-          address_line_1: details.businessPhysicalAddress?.trim() || null,
-          city: application.coverage_cities?.[0] || null,
+          location: capturedAddress,
+          address_line_1: capturedAddress,
+          city: capturedCity || application.coverage_cities?.[0] || null,
           province: application.coverage_provinces?.[0] || null,
           country: 'South Africa',
+          latitude: coordinates?.latitude ?? null,
+          longitude: coordinates?.longitude ?? null,
           contact_email: details.email?.trim() || details.userEmail?.trim() || null,
           whatsapp_number: details.userWhatsapp?.trim() || details.contactPhoneNumber?.trim() || null,
           instagram_url: details.instagram?.trim() || null,
@@ -466,7 +481,9 @@ export default function SubscriptionCheckoutScreen() {
           user_id: user.id,
           name: listingName,
           description: application.business_description?.trim() || null,
-          location: details.businessPhysicalAddress?.trim() || null,
+          location: capturedAddress,
+          latitude: coordinates?.latitude ?? null,
+          longitude: coordinates?.longitude ?? null,
           subscription_plan_key: application.subscription_tier,
           subscription_status: 'active',
           billing_period: billing || 'monthly',
@@ -482,10 +499,12 @@ export default function SubscriptionCheckoutScreen() {
         user_id: user.id,
         name: listingName,
         description: application.business_description?.trim() || null,
-        location: details.businessPhysicalAddress?.trim() || null,
-        address_line_1: details.businessPhysicalAddress?.trim() || null,
-        city: application.coverage_cities?.[0] || null,
+        location: capturedAddress,
+        address_line_1: capturedAddress,
+        city: capturedCity || application.coverage_cities?.[0] || null,
         province: application.coverage_provinces?.[0] || null,
+        latitude: coordinates?.latitude ?? null,
+        longitude: coordinates?.longitude ?? null,
         email: details.email?.trim() || details.userEmail?.trim() || null,
         whatsapp_number: details.contactPhoneNumber?.trim() || null,
         instagram_url: details.instagram?.trim() || null,
@@ -594,6 +613,18 @@ export default function SubscriptionCheckoutScreen() {
   };
 
   const handleContinue = async () => {
+    if (isSubmittingRef.current) return;
+    isSubmittingRef.current = true;
+    setIsSubmitting(true);
+    try {
+      await handleContinueInner();
+    } finally {
+      isSubmittingRef.current = false;
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleContinueInner = async () => {
     const newErrors = validateAll();
 
     if (Object.keys(newErrors).length > 0) {
@@ -1078,16 +1109,18 @@ export default function SubscriptionCheckoutScreen() {
     <TouchableOpacity
       onPress={handleContinue}
       activeOpacity={0.9}
+      disabled={isSubmitting}
       style={{
         backgroundColor: colors.primary,
         borderRadius: radii.lg,
         paddingVertical: spacing.md,
         alignItems: 'center',
         marginBottom: isDesktop ? 0 : spacing.xl,
+        opacity: isSubmitting ? 0.6 : 1,
       }}
     >
       <Text style={{ ...typography.bodyBold, color: colors.primaryForeground, fontSize: isDesktop ? 16 : undefined }}>
-        {isFree ? 'Confirm Free Plan & Continue' : 'Proceed to PayFast'}
+        {isSubmitting ? 'Please wait…' : isFree ? 'Confirm Free Plan & Continue' : 'Proceed to PayFast'}
       </Text>
     </TouchableOpacity>
   );

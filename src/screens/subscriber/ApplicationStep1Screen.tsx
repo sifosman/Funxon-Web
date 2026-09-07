@@ -246,6 +246,31 @@ export default function ApplicationStep1Screen() {
         </View>
 
         <View>
+          <Text style={{ ...typography.bodyMedium, color: colors.textPrimary, marginBottom: spacing.xs }}>
+            Town / City
+          </Text>
+          <Text style={{ ...typography.caption, color: colors.textMuted, marginBottom: spacing.xs }}>
+            The town your listing is in (e.g. Roshnee). Shown on your public portfolio.
+          </Text>
+          <TextInput
+            placeholder="e.g. Roshnee"
+            value={state.step1.city ?? ''}
+            onChangeText={(value) => handleChange('city', value)}
+            style={{
+              borderWidth: 1,
+              borderColor: cardBorder,
+              borderRadius: radii.md,
+              paddingHorizontal: spacing.md,
+              paddingVertical: spacing.sm,
+              backgroundColor: cardSurface,
+              fontSize: 14,
+              color: colors.textPrimary,
+              fontFamily: typography.body.fontFamily,
+            }}
+          />
+        </View>
+
+        <View>
           <AddressAutocompleteInput
             label="Billing Address"
             placeholder="Enter billing address"

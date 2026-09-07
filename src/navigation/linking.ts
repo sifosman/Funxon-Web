@@ -17,6 +17,9 @@ export const linking = {
               SubscriptionPlans: 'subscription-plans',
               VenueListingPlans: 'venue-listing-plans',
               ListersPortal: 'listers-portal',
+              // Public share links (built in VenueProfileScreen / VendorProfileScreen)
+              VenueProfile: 'venue/:venueId',
+              VendorProfile: 'vendor/:vendorId',
             },
           },
           Favourites: 'favourites',
@@ -43,6 +46,8 @@ export const linking = {
               PaymentResult: {
                 path: 'payment/:status',
               },
+              VenueProfile: 'venue/:venueId',
+              VendorProfile: 'vendor/:vendorId',
             },
           },
         },

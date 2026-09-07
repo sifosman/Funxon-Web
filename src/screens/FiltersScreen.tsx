@@ -16,7 +16,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { colors, spacing, radii, typography } from '../theme';
 import { VENDOR_CATEGORIES } from './AttendeeHomeScreen';
-import { venueTypes, amenitiesList, venueCapacityOptions } from '../config/venueTypes';
+import { venueTypes, amenitiesList, venueCapacityOptions, formatCapacityOption } from '../config/venueTypes';
 import { allVendorTags } from '../config/vendorTags';
 import { provinces } from '../config/locations';
 import MapRadiusSelector from '../components/MapRadiusSelector';
@@ -298,7 +298,7 @@ export default function FiltersScreen() {
               }}
             >
               <Text style={{ ...typography.body, color: selectedCapacity ? colors.textPrimary : colors.textMuted }}>
-                {selectedCapacity ?? 'Any'}
+                {selectedCapacity ? formatCapacityOption(selectedCapacity) : 'Any'}
               </Text>
               <MaterialIcons name="keyboard-arrow-down" size={20} color={colors.textSecondary} />
             </TouchableOpacity>
@@ -690,7 +690,9 @@ export default function FiltersScreen() {
 
                   const filteredOptions = allOptions
                     .filter((opt) => opt.toLowerCase().includes(dropdownSearch.trim().toLowerCase()))
-                    .sort((a, b) => a.localeCompare(b));
+                    // Capacity options are ordinal — keep the configured ascending
+                    // order instead of an alphabetical re-sort.
+                    .sort((a, b) => (activeDropdown === 'capacity' ? 0 : a.localeCompare(b)));
 
                   const anySelected =
                     activeDropdown === 'venue_type'
@@ -867,7 +869,7 @@ export default function FiltersScreen() {
                         >
                           {isSelected && <MaterialIcons name="check" size={16} color="#FFFFFF" />}
                         </View>
-                        <Text style={{ ...typography.body, color: colors.textPrimary, flex: 1 }}>{option}</Text>
+                        <Text style={{ ...typography.body, color: colors.textPrimary, flex: 1 }}>{activeDropdown === 'capacity' ? formatCapacityOption(option) : option}</Text>
                       </TouchableOpacity>
                     );
                   });

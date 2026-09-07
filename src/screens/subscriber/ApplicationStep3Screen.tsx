@@ -81,12 +81,33 @@ export default function ApplicationStep3Screen() {
         return;
       }
 
+      // Prefer the plan the applicant selected before starting the form
+      // (VenueListingPlansScreen sets step4.subscriptionPlan up front), so a
+      // paid plan gets its full limits immediately instead of the
+      // pre-payment get_started fallback (which used to show 5 photos / 0 videos).
+      const selectedPlan = state.step4.subscriptionPlan;
+      if (selectedPlan && selectedPlan !== 'get_started') {
+        const { data: planRow } = await supabase
+          .from('venue_subscription_plans')
+          .select('photo_upload_limit, video_upload_limit')
+          .eq('plan_key', selectedPlan)
+          .eq('is_active', true)
+          .maybeSingle();
+        if (planRow) {
+          setVenueLimits({
+            photoLimit: Number(planRow.photo_upload_limit) || 10,
+            videoLimit: Number(planRow.video_upload_limit) || 0,
+          });
+          return;
+        }
+      }
+
       const ent = await getMyVenueEntitlement(user.id);
       setVenueLimits({ photoLimit: ent.photoUploadLimit, videoLimit: ent.videoUploadLimit });
     }
 
     loadVenueLimits();
-  }, [state.portfolioType, user]);
+  }, [state.portfolioType, user, state.step4.subscriptionPlan]);
 
   const handlePickImages = async () => {
     try {

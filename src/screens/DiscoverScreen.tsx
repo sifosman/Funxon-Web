@@ -15,7 +15,7 @@ import { useAuth } from '../auth/AuthContext';
 import NetworkImage from '../components/NetworkImage';
 import { formatCardAddress } from '../utils/location';
 import type { AttendeeStackParamList } from '../navigation/AttendeeNavigator';
-import { venueTypes, amenitiesList, venueCapacityOptions } from '../config/venueTypes';
+import { venueTypes, amenitiesList, venueCapacityOptions, formatCapacityOption } from '../config/venueTypes';
 import { provinces } from '../config/locations';
 import MapRadiusSelector from '../components/MapRadiusSelector';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -1049,7 +1049,7 @@ export default function DiscoverScreen() {
                 <View style={{ marginBottom: 16 }}>
                   <Text style={{ fontSize: 12, fontWeight: '600', fontFamily: 'Montserrat_600SemiBold', color: colors.onSurfaceVariant, marginBottom: 8, letterSpacing: 0.05 }}>Capacity</Text>
                   <TouchableOpacity onPress={() => { setDropdownSearch(''); setActiveDropdown('capacity'); }} style={{ borderWidth: 1, borderColor: colors.outlineVariant, borderRadius: radii.md, paddingHorizontal: 12, paddingVertical: 10, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' } as any}>
-                    <Text style={{ fontSize: 14, fontFamily: 'Montserrat_400Regular', color: selectedCapacity ? colors.onSurface : colors.outline }}>{selectedCapacity ?? 'Any'}</Text>
+                    <Text style={{ fontSize: 14, fontFamily: 'Montserrat_400Regular', color: selectedCapacity ? colors.onSurface : colors.outline }}>{selectedCapacity ? formatCapacityOption(selectedCapacity) : 'Any'}</Text>
                     <MaterialIcons name="keyboard-arrow-down" size={20} color={colors.outline} />
                   </TouchableOpacity>
                 </View>
@@ -1512,7 +1512,7 @@ export default function DiscoverScreen() {
                       }}
                     >
                       <Text style={{ ...typography.body, color: selectedCapacity ? colors.textPrimary : colors.textMuted }}>
-                        {selectedCapacity ?? 'Any'}
+                        {selectedCapacity ? formatCapacityOption(selectedCapacity) : 'Any'}
                       </Text>
                       <MaterialIcons name="keyboard-arrow-down" size={20} color={colors.textSecondary} />
                     </TouchableOpacity>
@@ -2006,7 +2006,10 @@ export default function DiscoverScreen() {
 
                   const filteredOptions = allOptions
                     .filter((opt) => opt.toLowerCase().includes(dropdownSearch.trim().toLowerCase()))
-                    .sort((a, b) => a.localeCompare(b));
+                    // Capacity options are ordinal ("Under 50" ... "2000 and More"):
+                    // keep the configured ascending order instead of an alphabetical
+                    // re-sort, which scrambled them ("Under 1000" before "Under 50").
+                    .sort((a, b) => (activeDropdown === 'capacity' ? 0 : a.localeCompare(b)));
 
                   // Any option
                   const anySelected =
@@ -2178,7 +2181,7 @@ export default function DiscoverScreen() {
                         >
                           {isSelected && <MaterialIcons name="check" size={16} color="#FFFFFF" />}
                         </View>
-                        <Text style={{ ...typography.body, color: colors.textPrimary, flex: 1 }}>{option}</Text>
+                        <Text style={{ ...typography.body, color: colors.textPrimary, flex: 1 }}>{activeDropdown === 'capacity' ? formatCapacityOption(option) : option}</Text>
                       </TouchableOpacity>
                     );
                   });

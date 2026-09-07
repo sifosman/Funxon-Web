@@ -3,6 +3,7 @@ import { Image, Linking, Platform, Text, TouchableOpacity, View } from 'react-na
 import { WebView } from 'react-native-webview';
 import { MaterialIcons } from '@expo/vector-icons';
 import { colors, spacing, radii, typography } from '../../theme';
+import { formatVenueCapacity } from '../../config/venueTypes';
 import { PrimaryButton } from '../ui';
 
 type Props = {
@@ -124,7 +125,7 @@ const VenueAboutTab = React.memo(function VenueAboutTab({
               {venue.venue_capacity && (
                 <View style={{ marginBottom: spacing.sm }}>
                   <Text style={{ ...typography.caption, color: colors.textSecondary, marginBottom: spacing.xs }}>Capacity</Text>
-                  <Text style={{ ...typography.body, color: colors.textPrimary }}>{venue.venue_capacity} guests</Text>
+                  <Text style={{ ...typography.body, color: colors.textPrimary }}>{formatVenueCapacity(venue.venue_capacity) || `${venue.venue_capacity} guests`}</Text>
                 </View>
               )}
               {!venue.venue_capacity && maxHallCapacity && (
@@ -203,7 +204,32 @@ const VenueAboutTab = React.memo(function VenueAboutTab({
             </View>
           )}
           <View style={{ height: 220, borderRadius: radii.md, overflow: 'hidden', borderWidth: 1, borderColor: colors.borderSubtle, backgroundColor: colors.surfaceMuted, marginBottom: spacing.md }}>
-            {Platform.OS === 'web' ? null : nativeMapHtml ? (
+            {Platform.OS === 'web' ? (
+              webMapEmbedUrl ? (
+                <iframe
+                  title="Google Map"
+                  style={{ width: '100%', height: '100%', border: 'none' } as any}
+                  src={webMapEmbedUrl}
+                  allowFullScreen
+                  loading="lazy"
+                />
+              ) : (
+                <TouchableOpacity
+                  onPress={handleOpenMap}
+                  style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 16 }}
+                >
+                  <MaterialIcons name="place" size={32} color={colors.primary} />
+                  {physicalAddress ? (
+                    <Text style={{ ...typography.caption, color: colors.textSecondary, textAlign: 'center', marginTop: 4 }}>
+                      {physicalAddress}
+                    </Text>
+                  ) : null}
+                  <Text style={{ ...typography.caption, color: colors.primary, marginTop: 4 }}>
+                    Open in Google Maps
+                  </Text>
+                </TouchableOpacity>
+              )
+            ) : nativeMapHtml ? (
               !mapImageFailed && staticMapUrl ? (
                 <Image source={{ uri: staticMapUrl }} style={{ width: '100%', height: '100%' }} resizeMode="cover" onError={() => setMapImageFailed(true)} />
               ) : (

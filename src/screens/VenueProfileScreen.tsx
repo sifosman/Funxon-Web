@@ -19,6 +19,8 @@ import { colors, spacing, radii, typography } from '../theme';
 import { getFavourites, toggleFavourite } from '../lib/favourites';
 import { useAuth } from '../auth/AuthContext';
 import { useIsDesktop } from '../hooks/useIsDesktop';
+import { getEnv } from '../lib/env';
+import { formatVenueCapacity } from '../config/venueTypes';
 import { PrimaryButton } from '../components/ui';
 
 import VenueAboutTab from '../components/profile/VenueAboutTab';
@@ -29,7 +31,10 @@ import VenueCatalogueTab from '../components/profile/VenueCatalogueTab';
 const headerTitleLarge = { ...typography.titleLarge, fontFamily: 'Montserrat_700Bold' as const };
 const headerTitleMedium = { ...typography.titleMedium, fontFamily: 'Montserrat_600SemiBold' as const };
 
-const GOOGLE_MAPS_API_KEY = 'AIzaSyBjd1KYtTaAzxzdw5ayGwwMu5Sex-gKQLI';
+// Key is public (used for client-side maps) but sourced from env so it can be
+// rotated / restricted without a code change. Falls back to the previously
+// hardcoded key so existing deploys keep working.
+const GOOGLE_MAPS_API_KEY = getEnv('EXPO_PUBLIC_GOOGLE_MAPS_API_KEY', 'AIzaSyBjd1KYtTaAzxzdw5ayGwwMu5Sex-gKQLI') ?? '';
 
 type Props = NativeStackScreenProps<AttendeeStackParamList, 'VenueProfile'>;
 
@@ -116,7 +121,10 @@ type VenueDocument = {
 };
 
 export default function VenueProfileScreen({ route, navigation }: Props) {
-  const { venueId } = route.params;
+  // Deep links (https://funxon.co.za/venue/:venueId) pass the id as a string —
+  // normalize so the numeric-typed queries below stay enabled.
+  const { venueId: rawVenueId } = route.params;
+  const venueId = typeof rawVenueId === 'string' ? parseInt(rawVenueId, 10) : rawVenueId;
   const [activeTab, setActiveTab] = useState<'about' | 'amenities' | 'reviews' | 'catalogue'>('about');
   const [mapImageFailed, setMapImageFailed] = useState(false);
   const [galleryIndex, setGalleryIndex] = useState(0);
@@ -583,7 +591,7 @@ export default function VenueProfileScreen({ route, navigation }: Props) {
 
   const handleShare = async () => {
     if (!venue) return;
-    const url = `https://funxon-web.vercel.app/venue/${venue.id}`;
+    const url = `https://funxon.co.za/venue/${venue.id}`;
     const message = encodeURIComponent(`Check out ${venue.name} on Funxon: ${url}`);
     const whatsappUrl = Platform.select({
       ios: `https://wa.me/?text=${message}`,
@@ -614,12 +622,15 @@ export default function VenueProfileScreen({ route, navigation }: Props) {
     openExternalUrl(url);
   };
 
+  const contactMessage = venue ? `Hi, Funxon brought me to you! I'm interested in ${venue.name}.` : 'Hi, Funxon brought me to you!';
   const whatsappUrl = venue?.whatsapp_number
-    ? `https://wa.me/${venue.whatsapp_number.replace(/[^0-9]/g, '')}`
+    ? `https://wa.me/${venue.whatsapp_number.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(contactMessage)}`
     : null;
   const contactNumber = venue?.whatsapp_number?.trim() || null;
   const venueContactEmail = venue?.contact_email?.trim() || (venue as any)?.billing_email?.trim() || null;
-  const emailUrl = venueContactEmail ? `mailto:${venueContactEmail}` : null;
+  const emailUrl = venueContactEmail
+    ? `mailto:${venueContactEmail}?subject=${encodeURIComponent(`Funxon enquiry - ${venue?.name ?? 'listing'}`)}&body=${encodeURIComponent(`${contactMessage}\n\n`)}`
+    : null;
   const webMapEmbedUrl = mapCoordinates
     ? `https://www.google.com/maps?q=${mapCoordinates.latitude},${mapCoordinates.longitude}&z=16&output=embed`
     : mapSearchTarget
@@ -802,7 +813,7 @@ export default function VenueProfileScreen({ route, navigation }: Props) {
           <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: spacing.xs }}>
             <MaterialIcons name="people" size={16} color={colors.textMuted} />
             <Text style={{ ...typography.body, color: colors.textSecondary, marginLeft: 6 }}>
-              Up to {venue.venue_capacity} guests
+              {formatVenueCapacity(venue.venue_capacity) || `${venue.venue_capacity} guests`}
             </Text>
           </View>
         )}
@@ -1123,7 +1134,7 @@ const renderSidebar = () => (
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
             <View style={{ flex: 1, paddingRight: spacing.md }}>
               <Text style={{ ...typography.headlineMd, color: colors.primary }}>
-                {venue.venue_capacity ? `Up to ${venue.venue_capacity} guests` : 'Request a quote'}
+                {formatVenueCapacity(venue.venue_capacity) ?? 'Request a quote'}
               </Text>
               <Text style={{ ...typography.body, color: colors.onSurfaceVariant }}>
                 {venue.venue_type || 'Venue'}

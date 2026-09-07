@@ -13,6 +13,10 @@ export interface Step1Data {
   companyRegNumber: string;
   vatNumber: string;
   businessPhysicalAddress: string;
+  // The actual town/city of the physical address, captured free-text so the
+  // listing shows where the venue really is (coverage cities in step 2 are a
+  // separate marketing concept and come from a fixed list).
+  city: string;
   billingAddress: string;
   contactPhoneNumber: string;
   alternatePhone1: string;
@@ -105,6 +109,7 @@ const initialState: ApplicationFormState = {
     companyRegNumber: '',
     vatNumber: '',
     businessPhysicalAddress: '',
+    city: '',
     billingAddress: '',
     contactPhoneNumber: '',
     alternatePhone1: '',

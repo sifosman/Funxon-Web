@@ -20,6 +20,7 @@ import { PrimaryButton } from '../components/ui';
 import { getFavourites, toggleFavourite } from '../lib/favourites';
 import { useAuth } from '../auth/AuthContext';
 import { useIsDesktop } from '../hooks/useIsDesktop';
+import { getEnv } from '../lib/env';
 
 import VendorAboutTab from '../components/profile/VendorAboutTab';
 import VendorFeaturesTab from '../components/profile/VendorFeaturesTab';
@@ -28,7 +29,10 @@ import VendorCalendarTab from '../components/profile/VendorCalendarTab';
 
 type Props = NativeStackScreenProps<AttendeeStackParamList, 'VendorProfile'>;
 
-const GOOGLE_MAPS_API_KEY = 'AIzaSyBjd1KYtTaAzxzdw5ayGwwMu5Sex-gKQLI';
+// Key is public (used for client-side maps) but sourced from env so it can be
+// rotated / restricted without a code change. Falls back to the previously
+// hardcoded key so existing deploys keep working.
+const GOOGLE_MAPS_API_KEY = getEnv('EXPO_PUBLIC_GOOGLE_MAPS_API_KEY', 'AIzaSyBjd1KYtTaAzxzdw5ayGwwMu5Sex-gKQLI') ?? '';
 
 type Region = {
   latitude: number;
@@ -98,7 +102,10 @@ type GalleryMedia = {
 };
 
 export default function VendorProfileScreen({ route, navigation }: Props) {
-  const { vendorId } = route.params;
+  // Deep links (https://funxon.co.za/vendor/:vendorId) pass the id as a string —
+  // normalize so numeric-typed params behave the same as in-app navigation.
+  const { vendorId: rawVendorId } = route.params;
+  const vendorId = typeof rawVendorId === 'string' ? parseInt(rawVendorId, 10) : rawVendorId;
   const [activeTab, setActiveTab] = useState<'about' | 'features' | 'reviews' | 'calendar'>('about');
   const [galleryIndex, setGalleryIndex] = useState(0);
   const [zoomVisible, setZoomVisible] = useState(false);
@@ -511,7 +518,7 @@ export default function VendorProfileScreen({ route, navigation }: Props) {
 
   const handleShare = async () => {
     if (!vendor) return;
-    const url = `https://funxon-web.vercel.app/vendor/${vendor.id}`;
+    const url = `https://funxon.co.za/vendor/${vendor.id}`;
     const message = encodeURIComponent(`Check out ${vendor.name} on Funxon: ${url}`);
     const whatsappUrl = Platform.select({
       ios: `https://wa.me/?text=${message}`,
@@ -544,12 +551,15 @@ export default function VendorProfileScreen({ route, navigation }: Props) {
     openExternalUrl(url);
   };
 
+  const contactMessage = vendor ? `Hi, Funxon brought me to you! I'm interested in ${vendor.name}.` : 'Hi, Funxon brought me to you!';
   const whatsappUrl = vendor?.whatsapp_number
-    ? `https://wa.me/${String(vendor.whatsapp_number).replace(/[^0-9]/g, '')}`
+    ? `https://wa.me/${String(vendor.whatsapp_number).replace(/[^0-9]/g, '')}?text=${encodeURIComponent(contactMessage)}`
     : null;
   const contactNumber = vendor?.whatsapp_number?.trim() || null;
   const contactEmail = vendor?.email?.trim() || (vendor as any)?.billing_email?.trim() || null;
-  const emailUrl = contactEmail ? `mailto:${contactEmail}` : null;
+  const emailUrl = contactEmail
+    ? `mailto:${contactEmail}?subject=${encodeURIComponent(`Funxon enquiry - ${vendor?.name ?? 'listing'}`)}&body=${encodeURIComponent(`${contactMessage}\n\n`)}`
+    : null;
   const webMapEmbedUrl = mapCoordinates
     ? `https://www.google.com/maps?q=${mapCoordinates.latitude},${mapCoordinates.longitude}&z=16&output=embed`
     : mapSearchTarget
