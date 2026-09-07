@@ -134,3 +134,5 @@ that is what moves mail out of junk. Brevo free tier = 300 emails/day.
 4. Password reset flow → same branded template, redirect works.
 5. Ask one real user to check whether it lands in Junk (fully fixed only once
    custom SMTP + domain authentication from step 3 are in place).
+
+<!-- deployment pipeline check: 2026-09-07T18:44:17Z -->
