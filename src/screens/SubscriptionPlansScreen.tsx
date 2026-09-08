@@ -79,7 +79,7 @@ export default function SubscriptionPlansScreen() {
 
   const { width: SCREEN_WIDTH, CARD_WIDTH, SNAP_INTERVAL } = useMemo(() => {
     const width = containerWidth || Dimensions.get('window').width;
-    const CARD_WIDTH = width * 0.36;
+    const CARD_WIDTH = width * 0.46;
     const SNAP_INTERVAL = CARD_WIDTH + CARD_MARGIN * 2;
     return { width, CARD_WIDTH, SNAP_INTERVAL };
   }, [containerWidth]);
@@ -513,10 +513,10 @@ export default function SubscriptionPlansScreen() {
             onPress={() => setSelectedBilling('yearly')}
           >
             <Text
-              numberOfLines={1}
               style={{
                 ...typography.captionSemiBold,
                 color: selectedBilling === 'yearly' ? colors.primaryForeground : colors.textMuted,
+                textAlign: 'center',
               }}
             >
               Yearly (Save 20%)
@@ -542,7 +542,7 @@ export default function SubscriptionPlansScreen() {
             scrollAnimationDuration={350}
             overscrollEnabled={false}
             width={SNAP_INTERVAL}
-            height={540}
+            height={600}
             data={plans}
             style={{ width: '100%', overflow: 'visible' }}
             customAnimation={customAnimation}
@@ -582,7 +582,7 @@ export default function SubscriptionPlansScreen() {
                   <Animated.View
                     style={[
                       {
-                        height: 520,
+                        height: 580,
                         borderRadius: radii.xl,
                         backgroundColor: plan.theme.background,
                         padding: spacing.md,
@@ -719,7 +719,7 @@ export default function SubscriptionPlansScreen() {
                             key={feature.label}
                             style={{
                               flexDirection: 'row',
-                              alignItems: 'center',
+                              alignItems: 'flex-start',
                               marginBottom: 4,
                             }}
                           >
@@ -728,9 +728,10 @@ export default function SubscriptionPlansScreen() {
                                 name={value ? 'check-circle' : 'cancel'}
                                 size={12}
                                 color={value ? plan.theme.checkColor : plan.theme.textMuted}
+                                style={{ marginTop: 1 }}
                               />
                             ) : (
-                              <Text style={{ ...typography.captionSemiBold, color: plan.theme.text, fontSize: 10 }}>
+                              <Text style={{ ...typography.captionSemiBold, color: plan.theme.text, fontSize: 10, marginTop: 1 }}>
                                 {value}
                               </Text>
                             )}
@@ -742,7 +743,6 @@ export default function SubscriptionPlansScreen() {
                                 flex: 1,
                                 fontSize: 9,
                               }}
-                              numberOfLines={1}
                             >
                               {feature.label}
                             </Text>
@@ -846,7 +846,7 @@ export default function SubscriptionPlansScreen() {
                   backgroundColor: isDesktop ? colors.surfaceContainerLow : colors.surface,
                 }}
               >
-                <View style={{ width: 140, paddingHorizontal: spacing.lg, paddingVertical: spacing.md }}>
+                <View style={{ width: 220, paddingHorizontal: spacing.lg, paddingVertical: spacing.md }}>
                   <Text style={{ ...typography.captionBold, color: colors.textPrimary }}>Feature</Text>
                 </View>
                 {plans.map((plan) => (
@@ -884,7 +884,7 @@ export default function SubscriptionPlansScreen() {
                     <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                       <View
                         style={{
-                          width: 140,
+                          width: 220,
                           paddingHorizontal: spacing.lg,
                           paddingVertical: spacing.md,
                         }}
