@@ -68,6 +68,8 @@ Deno.serve(async (req: Request) => {
     const fromName = Deno.env.get('FROM_NAME') || 'Funxon Platform';
     const defaultAdminEmail = Deno.env.get('ADMIN_EMAIL') || 'admin@funxon.co.za';
     const defaultAdminName = Deno.env.get('ADMIN_NAME') || 'Funxon Admin';
+    // New listing / subscription notifications go to a dedicated inbox.
+    const listingsEmail = Deno.env.get('LISTINGS_EMAIL') || 'listings@funxon.co.za';
 
     if (!brevoApiKey) {
       throw new Error('BREVO_API_KEY environment variable is not set');
@@ -87,13 +89,27 @@ Deno.serve(async (req: Request) => {
     const adminEmail = payload.adminEmail || defaultAdminEmail;
     const adminName = payload.adminName || defaultAdminName;
 
+    // Listing & subscription events are routed to the listings inbox.
+    const listingTypes: NotificationType[] = [
+      'vendor-subscription-purchased',
+      'vendor-application-submitted',
+      'venue-application-submitted',
+      'vendor-free-signup',
+    ];
+    const recipientEmail = listingTypes.includes(payload.type) && !payload.adminEmail
+      ? listingsEmail
+      : adminEmail;
+    const recipientName = listingTypes.includes(payload.type) && !payload.adminEmail
+      ? 'Funxon Listings'
+      : adminName;
+
     // Generate email content based on notification type
     const { subject, htmlContent, textContent } = generateEmailContent(payload);
 
     // Send email via Brevo API
     const brevoPayload: BrevoEmailPayload = {
       sender: { name: fromName, email: fromEmail },
-      to: [{ email: adminEmail, name: adminName }],
+      to: [{ email: recipientEmail, name: recipientName }],
       subject,
       htmlContent,
       textContent,
